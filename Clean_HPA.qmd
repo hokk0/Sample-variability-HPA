@@ -139,4 +139,7 @@ normal_props <- all_metadata |>
 normal_props |> 
    filter(patient_id %in% c("2523","3731")) |> 
   ggplot() + aes(x= factor(patient_id), y = prop, fill = reliability) + geom_col()
+
 ```
+
+this is a test
