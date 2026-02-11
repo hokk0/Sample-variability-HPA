@@ -1,0 +1,142 @@
+---
+title: "Clean_HPA"
+format: html
+editor: visual
+---
+
+```{r}
+#install.packages("vroom")
+#install.packages("installr")
+library(vroom)
+library(tidyverse)
+library(here)
+library(readxl)
+library(janitor)
+
+#984 MB of data hahaha
+list_all<- list.files(
+  here("data","hpa_scraped_metadata_files"),
+           full.names = TRUE ) 
+length(list_all)
+Ophelia_data <- read.csv(here("data", "10K_Single_Cell_Filtered(in).csv"))
+
+files_col_name <- c("gene", "tissue", "antibody","image_link","info_id", "gender", "age", "tissue_detail", "sample_category", "patient_id", "cell_type", "expression_level_category", "reliability", "quantity","location")
+#worked but there are files with no content like files 361 and 363 edit: solved 
+
+all_metadata <- vroom::vroom(
+  list.files(here("data","hpa_scraped_metadata_files"),
+           full.names = TRUE),
+  delim = NULL,
+  col_names = files_col_name,
+  progress = TRUE,
+  id = "source_file")
+```
+
+Barplot showing exp_level between "tissue", want to see not detected across everything
+
+```{r}
+all_metadata|> 
+  ggplot(aes(x = tissue, fill = expression_level_category)) +
+  geom_bar(position = "fill") +
+  labs(title = "Protein Expression Levels by Tissue",
+       x = "Tissue Type", y = "Proportion") +
+  theme_minimal()
+```
+
+Now let's explore our patients, how old they are, what types of tissues they have, gender divide
+
+```{r}
+all_metadata |> 
+  count(age, sort = TRUE)
+
+all_metadata |> 
+  filter(!is.na(age)) |> 
+  distinct(patient_id, .keep_all = TRUE) |> 
+  ggplot() + aes(x = age, fill = gender) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 30) +
+  theme_minimal() +
+  labs(title = "Age Distribution by Gender")
+ggsave(here("output", "AgeDistributionByGender.pdf"))
+```
+
+Cross tables, using tabyl to make how many times x variable appear in each tissue
+
+```{r}
+cross_gene_tissue <- all_metadata |> 
+  tabyl(gene, tissue) |> 
+  adorn_totals("both") 
+cross_gene_tissue_prop <- all_metadata |> 
+  tabyl(gene, tissue) |> 
+  adorn_percentages("row") |> 
+  adorn_pct_formatting()
+cross_anti_reliability <- all_metadata |> 
+  tabyl(antibody, reliability) |> 
+  adorn_totals("both")
+cross_anti_reliability_prop <- all_metadata |> 
+  tabyl(antibody, reliability) |> 
+  adorn_percentages("row") |> 
+  adorn_pct_formatting()
+
+
+#an example of three way cross 
+cross3way_rel_patient_sampleCat <- all_metadata |> 
+  group_by(reliability) |> 
+  summarise(
+    table = list(tabyl(cur_data(), patient_id, sample_category)))
+```
+
+Ophelia's data, general exploration
+
+```{r}
+
+Ophelia_data |> 
+  count(Patient_ID, sort = TRUE)
+#less patients only 954 instead of 1,441
+all_metadata |> 
+  count(patient_id, sort = TRUE)
+#let's take at look at a patient of interest 
+Ophelia_data |> 
+  filter(Patient_ID == "2523")
+#130 data points for 2523 is it all the same? let's see also important note for her staining is exp_lvl_cat and reliability is intensity which makes sense 
+all_metadata |> 
+  filter(patient_id == "2523") |> 
+  filter(tissue_detail == "Heart (T-32000)") |> 
+  ggplot() + aes(x = reliability) +
+  geom_bar() +
+  theme_minimal()
+Ophelia_data |> 
+  filter(Patient_ID == "2523") |> 
+  filter(Tissue_Location == "Heart (T-32000)") |> 
+  ggplot() + aes(x = Intensity) +
+  geom_bar() +
+  scale_fill_brewer() +
+  theme_minimal()
+```
+
+To answer the question, Is patient 2523's normal tissue as reliable as any other patient? -\> Does the distribution of reliability scores in normal tissue differ between patients?
+
+```{r}
+all_metadata |> 
+  filter(patient_id %in% c("2523","3731")) |> 
+  select(sample_category, reliability, patient_id) |> 
+  count(reliability)
+#both are only normal tissue, we still see varible reliability
+  
+class(all_metadata$patient_id) 
+
+all_metadata |> 
+  filter(sample_category =="Normal tissue, NOS (M-00100)") |> 
+  count(patient_id)
+
+normal_props <- all_metadata |> 
+  filter(sample_category =="Normal tissue, NOS (M-00100)") |> 
+  count(patient_id,reliability) |> 
+  group_by(patient_id) |> 
+  mutate(prop = n / sum(n)) |> 
+  ungroup()
+#now i will plot per my two highest count patients 
+
+normal_props |> 
+   filter(patient_id %in% c("2523","3731")) |> 
+  ggplot() + aes(x= factor(patient_id), y = prop, fill = reliability) + geom_col()
+```
