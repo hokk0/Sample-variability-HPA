@@ -143,3 +143,35 @@ normal_props |>
 ```
 
 this is a test
+
+```{r}
+all_metadata |>
+  group_by(patient_id) |>
+  summarise(n_total = n(),
+    has_not_detected = any(expression_level_category == "Not detected", na.rm = TRUE),
+    has_other = any(expression_level_category != "Not detected", na.rm = TRUE),
+    .groups = "drop") |>
+  mutate(category = case_when(
+      has_not_detected & has_other ~ "mixed (not detected + other result)",
+      has_not_detected & !has_other ~ "only not detected",
+      !has_not_detected & has_other ~ "no not detected (only real results)",
+      TRUE ~ "other"))
+
+#same but now i want to include the gene
+all_metadata |>
+  group_by(patient_id, gene) |>
+  summarise(n_tests = n(),
+    has_not_detected = any(expression_level_category == "Not detected",
+                           na.rm = TRUE),
+    has_other = any(expression_level_category != "Not detected",
+                    na.rm = TRUE),
+    n_not_detected = sum(expression_level_category == "Not detected", 
+                         na.rm = TRUE),
+    n_other = sum(expression_level_category != "Not detected", 
+                  na.rm = TRUE),
+    .groups = "drop") |>
+  mutate(category = case_when(
+      has_not_detected & !has_other ~ "only not detected (no retest)",
+      has_not_detected & has_other ~ "not detected and a retest",
+      !has_not_detected ~ "never not detected"))
+```
