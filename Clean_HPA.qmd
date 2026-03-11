@@ -175,3 +175,33 @@ all_metadata |>
       has_not_detected & has_other ~ "not detected and a retest",
       !has_not_detected ~ "never not detected"))
 ```
+
+Full Join of both datasets (missing clarification on tissues: T-2300, T-X1600 and T-X2570
+
+```{r}
+#Processed 
+mergeable_metadata <- all_metadata |> 
+  mutate(tissue = str_to_title(tissue),
+         tissue = str_remove(tissue, "\\+.*"),
+         antibody = str_remove(antibody, "Antibody ")) |> 
+  rename(Protein = gene,
+         Patient_ID = patient_id, 
+         Tissue = tissue)
+
+great_join <- Ophelia_data |> 
+  left_join(mergeable_metadata |> 
+  select(antibody, 
+         Protein, 
+         Patient_ID, 
+         Tissue, 
+         reliability, 
+         sample_category), 
+  by =  c("antibody", "Protein", "Patient_ID", "Tissue"))
+
+setdiff(Ophelia_data$Tissue, mergeable_metadata$Tissue)
+
+all_metadata |>  
+  filter(str_detect(tissue_detail, "(T-23000)|(T-X1600)| (T-X2570)"))
+
+
+```
