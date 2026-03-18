@@ -4,24 +4,25 @@ format: html
 editor: visual
 ---
 
+Sample Variability Analysis
+
+Act 1
+
+Libraries used:
+
 ```{r}
-#install.packages("vroom")
-#install.packages("installr")
 library(vroom)
 library(tidyverse)
 library(here)
 library(readxl)
 library(janitor)
+library(irr)
+```
 
-#984 MB of data hahaha
-list_all<- list.files(
-  here("data","hpa_scraped_metadata_files"),
-           full.names = TRUE ) 
-length(list_all)
-Ophelia_data <- read.csv(here("data", "10K_Single_Cell_Filtered(in).csv"))
+Data loading
 
+```{r}
 files_col_name <- c("gene", "tissue", "antibody","image_link","info_id", "gender", "age", "tissue_detail", "sample_category", "patient_id", "cell_type", "expression_level_category", "reliability", "quantity","location")
-#worked but there are files with no content like files 361 and 363 edit: solved 
 
 all_metadata <- vroom::vroom(
   list.files(here("data","hpa_scraped_metadata_files"),
@@ -30,9 +31,13 @@ all_metadata <- vroom::vroom(
   col_names = files_col_name,
   progress = TRUE,
   id = "source_file")
+
+Ophelia_data <- read.csv(here("data", "10K_Single_Cell_Filtered(in).csv"))
+
+
 ```
 
-Barplot showing exp_level between "tissue", want to see not detected across everything
+Barplot showing exp_level between "tissue"
 
 ```{r}
 all_metadata|> 
@@ -43,11 +48,13 @@ all_metadata|>
   theme_minimal()
 ```
 
-Now let's explore our patients, how old they are, what types of tissues they have, gender divide
+Patient counts
 
 ```{r}
 all_metadata |> 
   count(age, sort = TRUE)
+all_metadata |> 
+  count(patient_id, sort = TRUE)
 
 all_metadata |> 
   filter(!is.na(age)) |> 
@@ -59,16 +66,22 @@ all_metadata |>
 ggsave(here("output", "AgeDistributionByGender.pdf"))
 ```
 
-Cross tables, using tabyl to make how many times x variable appear in each tissue
+Act 2
+
+Cross tables, using tabyl to make how many times x variable appear in each tissue. Used for descriptive structre
 
 ```{r}
+#Gene x tissue frequency and proportions 
 cross_gene_tissue <- all_metadata |> 
   tabyl(gene, tissue) |> 
   adorn_totals("both") 
+
 cross_gene_tissue_prop <- all_metadata |> 
   tabyl(gene, tissue) |> 
   adorn_percentages("row") |> 
   adorn_pct_formatting()
+
+#Antibody x reliability frequency and proportions 
 cross_anti_reliability <- all_metadata |> 
   tabyl(antibody, reliability) |> 
   adorn_totals("both")
@@ -78,42 +91,323 @@ cross_anti_reliability_prop <- all_metadata |>
   adorn_pct_formatting()
 
 
-#an example of three way cross 
+#an example of three way cros: reliability x patient x sample category 
 cross3way_rel_patient_sampleCat <- all_metadata |> 
   group_by(reliability) |> 
   summarise(
     table = list(tabyl(cur_data(), patient_id, sample_category)))
 ```
 
-Ophelia's data, general exploration
+"Not detected" category profiling per patient and gene: Classifies each patient by whether their entries are entirely "Not detected", mixed or clean.
+
+```{r}
+#Purely per patient
+all_metadata |>
+  group_by(patient_id) |>
+  summarise(n_total = n(),
+    has_not_detected = any(expression_level_category == "Not detected", na.rm = TRUE),
+    has_other = any(expression_level_category != "Not detected", na.rm = TRUE),
+    .groups = "drop") |>
+  mutate(category = case_when(
+      has_not_detected & has_other ~ "mixed (not detected + other result)",
+      has_not_detected & !has_other ~ "only not detected",
+      !has_not_detected & has_other ~ "no not detected (only real results)",
+      TRUE ~ "other"))
+
+#Per Patient x gene 
+all_metadata |>
+  group_by(patient_id, gene) |>
+  summarise(n_tests = n(),
+    has_not_detected = any(expression_level_category == "Not detected",
+                           na.rm = TRUE),
+    has_other = any(expression_level_category != "Not detected",
+                    na.rm = TRUE),
+    n_not_detected = sum(expression_level_category == "Not detected", 
+                         na.rm = TRUE),
+    n_other = sum(expression_level_category != "Not detected", 
+                  na.rm = TRUE),
+    .groups = "drop") |>
+  mutate(category = case_when(
+      has_not_detected & !has_other ~ "only not detected (no retest)",
+      has_not_detected & has_other ~ "not detected and a retest",
+      !has_not_detected ~ "never not detected"))
+```
+
+Do reliability distributions differ between patients, within the same tissue?
+
+```{r}
+normal_props <- all_metadata |> 
+  filter(sample_category =="Normal tissue, NOS (M-00100)") |> 
+  count(patient_id,reliability) |> 
+  group_by(patient_id) |> 
+  mutate(prop = n / sum(n)) |> 
+  ungroup()
+#Plot per two highest count patients 
+
+normal_props |> 
+   filter(patient_id %in% c("2523","3731")) |> 
+  ggplot() + aes(x= factor(patient_id), y = prop, fill = reliability) + geom_col()
+
+```
+
+Data Merge & Exploration
+
+```{r}
+#Transforming data into proper formatting
+mergeable_metadata <- all_metadata |> 
+  mutate(tissue = str_to_title(tissue),
+         tissue = str_remove(tissue, "\\+.*"),
+         antibody = str_remove(antibody, "Antibody ")) |> 
+  rename(Protein = gene,
+         Patient_ID = patient_id, 
+         Tissue = tissue)
+#Joining and making proper ordinal values for relevant labels 
+great_join <- Ophelia_data |> 
+  left_join(mergable_metadata |> 
+  select(antibody, 
+         Protein, 
+         Patient_ID, 
+         Tissue, 
+         reliability, 
+         sample_category), 
+  by =  c("antibody", "Protein", "Patient_ID", "Tissue")) |> 
+  mutate(quantity_ord = factor(Quantity, 
+                               levels = c("None", "<25%", "75%-25%", ">75%"), 
+                               ordered = TRUE), 
+         staining_ord = factor(Staining, 
+                               levels = c("Not detected", "Low", "Medium", "High"),
+                               ordered = TRUE), 
+         intensity_ord = factor(Intensity, 
+                                levels = c("Negative", "Weak", "Moderate", "Strong"),
+                                ordered = TRUE), 
+         reliability_ord = factor(reliability, 
+                                  levels = c("Negative", "Weak", "Moderate", "Strong"),
+                                  ordered = TRUE))
+
+#EDIT 
+unmatched_data <- setdiff(Ophelia_data$Tissue, mergable_metadata$Tissue)
+unmatched_data
+
+
+```
+
+ACT3: Concordance Analysis Labels "Stain" x "Quantity
+
+```{r}
+#EDIT: EXPLAIN
+concordance_StainQuant <- great_join |>
+  filter(!is.na(reliability))|> 
+  tabyl(staining_ord, quantity_ord) |> 
+  adorn_totals("both") |> 
+  adorn_percentages("row") |> 
+  adorn_pct_formatting()
+concordance_StainQuant
+
+#Concordance table visualization
+great_join |> 
+  filter(!is.na(reliability)) |> 
+  count(staining_ord, quantity_ord) |> 
+  group_by(staining_ord) |> 
+  mutate(prop = n / sum(n)) |> 
+  ungroup() |> 
+  ggplot() + aes(x = staining_ord, y = quantity_ord, fill = prop) +
+  geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
+                          colour = "white", frontface = "bold") +
+  labs(title = "HPA Expression Label vs Image-derived Staining %",
+       y = "Image-derived Quantity (%)", 
+       x = "HPA Expression Level Category", 
+       fill = "Row proportion") 
+ggsave(here("output", "Act3_concor_Heatmap.pdf"))
+
+
+
+```
+
+Kappa Value for Staining Label (check if able to use)
+
+```{r}
+kappa_stain <- great_join |> 
+  filter(!is.na(reliability)) |> 
+  transmute(
+    rater1 = as.numeric(staining_ord),
+    rater2 = as.numeric(quantity_ord)) |> 
+  kappa2(weight = "squared")
+kappa_stain
+
+```
+
+Are the reliability labels meaningful? - This is a direct label from all_metadata, basically analysis in three ways - Ophelia's data against all_metadata - HPA site labels against Image-Derived % - Is reliability as good as staining (ei. exp_lvl_cat)?
+
+```{r}
+#Do rows in reliability (all_metadata) "High" have higher concordance with Ophelia's data than rows where HPA says "Negative"?
+great_join |> 
+  mutate(concordant = case_when(is.na(reliability) ~ NA, 
+         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
+         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
+         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
+         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
+         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
+         TRUE  ~ FALSE )) |> 
+  filter(!is.na(concordant)) |> 
+  group_by(reliability) |> 
+  summarise(n = n(),
+            n_concordant = sum(concordant),
+            pct_concordant = round(n_concordant / n *100, 1),
+            .groups = "drop") |> 
+  arrange(desc(pct_concordant))
+
+#Concordance table visualization of reliability 
+great_join |> 
+  filter(!is.na(reliability)) |> 
+  count(reliability_ord, quantity_ord) |> 
+  group_by(reliability_ord) |> 
+  mutate(prop = n / sum(n)) |> 
+  ungroup() |> 
+  ggplot() + aes(x = reliability_ord, y = quantity_ord, fill = prop) +
+  geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
+                          colour = "white", frontface = "bold") +
+  labs(title = "HPA Reliability Label vs Image-derived Staining %",
+       y = "Image-derived Quantity (%)", 
+       x = "HPA Reliability", 
+       fill = "Row proportion") 
+ggsave(here("output", "Act3_concorReli_Heatmap.pdf"))
+
+```
+
+Kappa Value for Staining Label (check if able to use)
+
+```{r}
+kappa_reliability <- great_join |> 
+  filter(!is.na(reliability)) |> 
+  transmute(
+    rater1 = as.numeric(reliability_ord),
+    rater2 = as.numeric(quantity_ord)) |> 
+  kappa2(weight = "squared")
+kappa_reliability
+
+```
+
+Identifying nonconcordant observations
+
+```{r}
+nonconcordant <- great_join |> 
+  mutate(concordant = case_when(is.na(reliability) ~ NA, 
+         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
+         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
+         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
+         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
+         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
+         TRUE  ~ FALSE )) |>
+  filter(!is.na(reliability), concordant == FALSE)
+
+#Top 15 tissues
+nonconcordant |> 
+  count(Tissue, sort = TRUE) |> 
+  mutate(prop_nonconcordant = n / sum(n)) |> 
+  head(15) |> 
+  ggplot() + aes(x = reorder(Tissue, n), y = n, fill = n) + 
+  geom_col() + coord_flip() +
+  scale_fill_distiller(palette = "Spectral") +
+  labs(title = "Top 15 Tissues by Nonconcordance Count",
+       x = "Tissue",
+       y = "Number of nonconcordant rows", 
+       fill = " ")
+  
+ggsave(here("output", "Act3_top15_noncor.pdf"))
+
+#Checking for rate within data, sister plot 
+great_join |>
+  mutate(concordant = case_when(is.na(reliability) ~ NA, 
+         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
+         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
+         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
+         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
+         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
+         TRUE  ~ FALSE )) |> 
+  filter(!is.na(reliability), !is.na(concordant)) |>
+  group_by(Tissue) |>
+  summarise(n_total        = n(),
+    n_nonconcordant = sum(!concordant, na.rm = TRUE),
+    pct_nonconcordant = round(n_nonconcordant / n_total * 100, 1),
+    .groups = "drop") |>
+  filter(n_total >= 50) |>       
+  slice_max(pct_nonconcordant, n = 15) |>
+  ggplot(aes(x = reorder(Tissue, pct_nonconcordant), 
+             y = pct_nonconcordant,
+             fill = pct_nonconcordant)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_distiller(palette = "RdYlGn", 
+                       direction = -1,      
+                       name = "% nonconcordant") +
+  geom_text(aes(label = paste0(pct_nonconcordant, "%")),
+            hjust = -0.2, size = 3.5) +
+  labs(
+    title    = "Top 15 Tissues by Nonconcordance Rate",
+    subtitle = "Only tissues with ≥ 50 rows included",
+    x        = "Tissue",
+    y        = "% nonconcordant rows") +
+  theme_minimal(base_size = 12) +
+  expand_limits(y = 100)
+ggsave(here("output", "Act3_top15_noncor_rate.pdf"))
+
+```
+
+Nonconcordance by antibody
 
 ```{r}
 
-Ophelia_data |> 
-  count(Patient_ID, sort = TRUE)
-#less patients only 954 instead of 1,441
-all_metadata |> 
-  count(patient_id, sort = TRUE)
-#let's take at look at a patient of interest 
-Ophelia_data |> 
-  filter(Patient_ID == "2523")
-#130 data points for 2523 is it all the same? let's see also important note for her staining is exp_lvl_cat and reliability is intensity which makes sense 
-all_metadata |> 
-  filter(patient_id == "2523") |> 
-  filter(tissue_detail == "Heart (T-32000)") |> 
-  ggplot() + aes(x = reliability) +
-  geom_bar() +
-  theme_minimal()
-Ophelia_data |> 
-  filter(Patient_ID == "2523") |> 
-  filter(Tissue_Location == "Heart (T-32000)") |> 
-  ggplot() + aes(x = Intensity) +
-  geom_bar() +
-  scale_fill_brewer() +
-  theme_minimal()
+great_join |>
+  mutate(concordant = case_when(is.na(reliability) ~ NA, 
+         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
+         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
+         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
+         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
+         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
+         TRUE  ~ FALSE )) |> 
+  filter(!is.na(reliability), !is.na(concordant)) |>
+  group_by(antibody) |>
+  summarise(n_total        = n(),
+    n_nonconcordant = sum(!concordant, na.rm = TRUE),
+    pct_nonconcordant = round(n_nonconcordant / n_total * 100, 1),
+    .groups = "drop") |>
+  filter(n_total >= 50) |>       
+  slice_max(pct_nonconcordant, n = 15) |>
+  ggplot(aes(x = reorder(antibody, pct_nonconcordant), 
+             y = pct_nonconcordant,
+             fill = pct_nonconcordant)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_distiller(palette = "RdYlGn", 
+                       direction = -1,      
+                       name = "% nonconcordant") +
+  geom_text(aes(label = paste0(pct_nonconcordant, "%")),
+            hjust = -0.2, size = 3.5) +
+  labs(
+    title    = "Top 15 Antibodies by Nonconcordance Rate",
+    subtitle = "Only Antibodies with ≥ 50 rows included",
+    x        = "Antibody",
+    y        = "% nonconcordant rows") +
+  theme_minimal(base_size = 12) +
+  expand_limits(y = 100)
+ggsave(here("output", "Act3_top15_antibody_noncor_rate.pdf"))
+
+#Since antibodies have much higher rates, verifying top antibody
+
+great_join |> 
+  filter(antibody == "HPA002024") |> 
+  count(staining_ord, quantity_ord, sort = TRUE)
+
+great_join |> 
+  filter(antibody == "HPA002024") |> 
+  nrow()
+great_join |> 
+  filter(antibody == "HPA002024") |> 
+  count(Tissue, sort = TRUE)
+
 ```
 
-To answer the question, Is patient 2523's normal tissue as reliable as any other patient? -\> Does the distribution of reliability scores in normal tissue differ between patients?
+EDIT: To answer the question, Is patient 2523's normal tissue as reliable as any other patient? -\> Does the distribution of reliability scores in normal tissue differ between patients?
 
 ```{r}
 all_metadata |> 
@@ -141,86 +435,3 @@ normal_props |>
   ggplot() + aes(x= factor(patient_id), y = prop, fill = reliability) + geom_col()
 
 ```
-
-this is a test
-
-```{r}
-all_metadata |>
-  group_by(patient_id) |>
-  summarise(n_total = n(),
-    has_not_detected = any(expression_level_category == "Not detected", na.rm = TRUE),
-    has_other = any(expression_level_category != "Not detected", na.rm = TRUE),
-    .groups = "drop") |>
-  mutate(category = case_when(
-      has_not_detected & has_other ~ "mixed (not detected + other result)",
-      has_not_detected & !has_other ~ "only not detected",
-      !has_not_detected & has_other ~ "no not detected (only real results)",
-      TRUE ~ "other"))
-
-#same but now i want to include the gene
-all_metadata |>
-  group_by(patient_id, gene) |>
-  summarise(n_tests = n(),
-    has_not_detected = any(expression_level_category == "Not detected",
-                           na.rm = TRUE),
-    has_other = any(expression_level_category != "Not detected",
-                    na.rm = TRUE),
-    n_not_detected = sum(expression_level_category == "Not detected", 
-                         na.rm = TRUE),
-    n_other = sum(expression_level_category != "Not detected", 
-                  na.rm = TRUE),
-    .groups = "drop") |>
-  mutate(category = case_when(
-      has_not_detected & !has_other ~ "only not detected (no retest)",
-      has_not_detected & has_other ~ "not detected and a retest",
-      !has_not_detected ~ "never not detected"))
-```
-
-Full Join of both datasets (missing clarification on tissues: T-2300, T-X1600 and T-X2570
-
-```{r}
-#Processed 
-mergeable_metadata <- all_metadata |> 
-  mutate(tissue = str_to_title(tissue),
-         tissue = str_remove(tissue, "\\+.*"),
-         antibody = str_remove(antibody, "Antibody ")) |> 
-  rename(Protein = gene,
-         Patient_ID = patient_id, 
-         Tissue = tissue)
-
-great_join <- Ophelia_data |> 
-  left_join(mergeable_metadata |> 
-  select(antibody, 
-         Protein, 
-         Patient_ID, 
-         Tissue, 
-         reliability, 
-         sample_category), 
-  by =  c("antibody", "Protein", "Patient_ID", "Tissue"))
-
-setdiff(Ophelia_data$Tissue, mergeable_metadata$Tissue)
-
-all_metadata |>  
-  filter(str_detect(tissue_detail, "(T-23000)|(T-X1600)| (T-X2570)"))
-
-
-```
-
-**Visualization of data**
-
-First, per one chosen condition do the antibodies vary in reliability or exp_lvl_cat?
-
-```{r}
-great_join |>
-  count(Tissue_Status, sort = TRUE)
-#selected Adenocarcinoma, High grade (M-814033)
-great_join |> 
-  filter(Tissue_Status == "Adenocarcinoma, High grade (M-814033)") |> 
-  ggplot() + aes(x = reliability) + geom_bar() 
-#there is a lot of variation within the tissue, checking now for exp_lvl_cat
-great_join |> 
-  filter(Tissue_Status == "Adenocarcinoma, High grade (M-814033)") |> 
-  ggplot() + aes(x = Staining) + geom_bar() 
-#they definetly do not match 
-```
-
