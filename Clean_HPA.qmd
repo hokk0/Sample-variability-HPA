@@ -6,9 +6,9 @@ editor: visual
 
 Sample Variability Analysis
 
-Act 1
+## Act 1
 
-Libraries used:
+Libraries used
 
 ```{r}
 library(vroom)
@@ -36,8 +36,8 @@ all_metadata <- vroom::vroom(
 HUEQ_data <- read.csv(here("data", "10K_Single_Cell_Filtered(in).csv"))
 
 #reliability column in all_metadata is the "intensity" variable from HPA webiste
-all_metata <- all_metata |> 
-  rename(intensity = )
+all_metadata <- all_metadata |> 
+  rename(intensity = reliability)
 
 
 ```
@@ -71,7 +71,7 @@ all_metadata |>
 ggsave(here("output", "AgeDistributionByGender.pdf"))
 ```
 
-Main figure for counts
+### Main figure for counts
 
 ```{r}
 
@@ -79,7 +79,7 @@ Main figure for counts
 
 ```
 
-Act 2
+## Act 2
 
 Cross tables, using tabyl to make how many times x variable appear in each tissue. Used for descriptive structre
 
@@ -94,19 +94,19 @@ cross_gene_tissue_prop <- all_metadata |>
   adorn_percentages("row") |> 
   adorn_pct_formatting()
 
-#Antibody x reliability frequency and proportions 
-cross_anti_reliability <- all_metadata |> 
-  tabyl(antibody, reliability) |> 
+#Antibody x Intensity frequency and proportions 
+cross_anti_intensity <- all_metadata |> 
+  tabyl(antibody, intensity) |> 
   adorn_totals("both")
-cross_anti_reliability_prop <- all_metadata |> 
-  tabyl(antibody, reliability) |> 
+cross_anti_intensity_prop <- all_metadata |> 
+  tabyl(antibody, intensity) |> 
   adorn_percentages("row") |> 
   adorn_pct_formatting()
 
 
-#an example of three way cros: reliability x patient x sample category 
+#an example of three way cros: intensity x patient x sample category 
 cross3way_rel_patient_sampleCat <- all_metadata |> 
-  group_by(reliability) |> 
+  group_by(intensity) |> 
   summarise(
     table = list(tabyl(cur_data(), patient_id, sample_category)))
 ```
@@ -146,276 +146,230 @@ all_metadata |>
       !has_not_detected ~ "never not detected"))
 ```
 
-Do reliability distributions differ between patients, within the same tissue?
+### Data Merge & Exploration
 
 ```{r}
-normal_props <- all_metadata |> 
-  filter(sample_category =="Normal tissue, NOS (M-00100)") |> 
-  count(patient_id,reliability) |> 
-  group_by(patient_id) |> 
-  mutate(prop = n / sum(n)) |> 
-  ungroup()
-#Plot per two highest count patients 
+mergeable_metadata <- all_metadata |>
+  mutate(tissue   = str_to_title(tissue),
+         tissue   = str_remove(tissue, "\\+.*"),
+         antibody = str_remove(antibody, "Antibody ")) |>
+  rename(Protein        = gene,
+         Patient_ID     = patient_id,
+         Tissue         = tissue,
+         Antibody       = antibody,
+         HPA_Staining   = expression_level_category,
+         HPA_Intensity  = intensity)                  
 
-normal_props |> 
-   filter(patient_id %in% c("2523","3731")) |> 
-  ggplot() + aes(x= factor(patient_id), y = prop, fill = reliability) + geom_col()
-
-```
-
-Data Merge & Exploration
-
-```{r}
-#Transforming data into proper formatting
-mergeable_metadata <- all_metadata |> 
-  mutate(tissue = str_to_title(tissue),
-         tissue = str_remove(tissue, "\\+.*"),
-         antibody = str_remove(antibody, "Antibody ")) |> 
-  rename(Protein = gene,
-         Patient_ID = patient_id, 
-         Tissue = tissue)
-#Joining and making proper ordinal values for relevant labels 
-great_join <- HUEQ_data |> 
-  left_join(mergable_metadata |> 
-  select(antibody, 
-         Protein, 
-         Patient_ID, 
-         Tissue, 
-         reliability, 
-         sample_category), 
-  by =  c("antibody", "Protein", "Patient_ID", "Tissue")) |> 
+great_join <- HUEQ_data |>
+  left_join(mergeable_metadata |>
+      select(Antibody, Protein, Patient_ID, Tissue, HPA_Staining, HPA_Intensity),
+    by = c("Antibody", "Protein", "Patient_ID", "Tissue")) |> 
+  distinct(Antibody, Protein, Patient_ID, Tissue, Quantity, .keep_all = TRUE) |> 
   mutate(quantity_ord = factor(Quantity, 
                                levels = c("None", "<25%", "75%-25%", ">75%"), 
                                ordered = TRUE), 
-         staining_ord = factor(Staining, 
+         hpa_staining_ord = factor(HPA_Staining, 
                                levels = c("Not detected", "Low", "Medium", "High"),
                                ordered = TRUE), 
-         intensity_ord = factor(Intensity, 
-                                levels = c("Negative", "Weak", "Moderate", "Strong"),
-                                ordered = TRUE), 
-         reliability_ord = factor(reliability, 
-                                  levels = c("Negative", "Weak", "Moderate", "Strong"),
-                                  ordered = TRUE))
+         hpa_intensity_ord = factor(HPA_Intensity, 
+                                levels = 
+                                  c("Negative", "Weak", "Moderate", "Strong"),
+                                ordered = TRUE))
+# 3 duplicate matches removed (with distinct): HPA stores sub-regional tissue entries 
+# (e.g. upper vs lower stomach) that collapse to the same Tissue label causing one HUEQ row to match multiple all_metadata entries
+```
 
-#EDIT 
-unmatched_data <- setdiff(HUEQ_data$Tissue, mergable_metadata$Tissue)
-unmatched_data
+## ACT 3
 
+### Weighted Kappa: Interrater agreement
+
+For the purposes of this analysis the "raters" are the ordinal descriptors or labels: Staining (Expression Level Category), Intensity (Staining Intensity) & Quantity.
+
+```{r}
+kappa_staining<- great_join |> 
+  filter(!is.na(HPA_Staining)) |> 
+  transmute(rater1 = as.numeric(hpa_staining_ord),
+            rater2 = as.numeric(quantity_ord)) |> 
+  kappa2(weight = "squared")
+kappa_staining
+
+kappa_intensity <- great_join |> 
+  filter(!is.na(HPA_Intensity)) |> 
+  transmute(rater1 = as.numeric(hpa_intensity_ord),
+            rater2 = as.numeric(quantity_ord)) |> 
+  kappa2(weight = "squared")
+kappa_intensity
 
 ```
 
-ACT3: Concordance Analysis Labels "Stain" x "Quantity
+### Heat maps
+
+HPA labels (Staining & Intensity) vs HPA Quantity (derived from HUEQ)
 
 ```{r}
-#EDIT: EXPLAIN
-concordance_StainQuant <- great_join |>
-  filter(!is.na(reliability))|> 
-  tabyl(staining_ord, quantity_ord) |> 
+#Agreement table 
+concordance_StainQuant <- great_join |> 
+  tabyl(hpa_staining_ord, quantity_ord) |> 
   adorn_totals("both") |> 
   adorn_percentages("row") |> 
   adorn_pct_formatting()
-concordance_StainQuant
-
-#Concordance table visualization
-great_join |> 
-  filter(!is.na(reliability)) |> 
-  count(staining_ord, quantity_ord) |> 
-  group_by(staining_ord) |> 
+#First Heat map 
+Heatmap_A <- great_join |> 
+  filter(!is.na(HPA_Staining)) |> 
+  count(hpa_staining_ord, quantity_ord) |> 
+  group_by(hpa_staining_ord) |> 
   mutate(prop = n / sum(n)) |> 
   ungroup() |> 
-  ggplot() + aes(x = staining_ord, y = quantity_ord, fill = prop) +
+  ggplot() + aes(x = hpa_staining_ord, y = quantity_ord, fill = prop) +
   geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
                           colour = "white", frontface = "bold") +
-  labs(title = "HPA Expression Label vs Image-derived Staining %",
-       y = "Image-derived Quantity (%)", 
+  labs(title = "HPA Expression Label vs HPA Quantity Label",
+       subtitle = "Inter-label agreement across 16,643 observations",
+       y = "HPA Quantity Label, derived from HUEQ (%)", 
        x = "HPA Expression Level Category", 
        fill = "Row proportion") 
-ggsave(here("output", "Act3_concor_Heatmap.pdf"))
-
-
-
-```
-
-Kappa Value for Staining Label (check if able to use)
-
-```{r}
-kappa_stain <- great_join |> 
-  filter(!is.na(reliability)) |> 
-  transmute(
-    rater1 = as.numeric(staining_ord),
-    rater2 = as.numeric(quantity_ord)) |> 
-  kappa2(weight = "squared")
-kappa_stain
-
-```
-
-Are the reliability labels meaningful? - This is a direct label from all_metadata, basically analysis in three ways - HUEQ's data against all_metadata - HPA site labels against Image-Derived % - Is reliability as good as staining (ei. exp_lvl_cat)?
-
-```{r}
-#Do rows in reliability (all_metadata) "High" have higher concordance with HUEQ's data than rows where HPA says "Negative"?
-great_join |> 
-  mutate(concordant = case_when(is.na(reliability) ~ NA, 
-         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
-         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
-         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
-         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
-         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
-         TRUE  ~ FALSE )) |> 
-  filter(!is.na(concordant)) |> 
-  group_by(reliability) |> 
-  summarise(n = n(),
-            n_concordant = sum(concordant),
-            pct_concordant = round(n_concordant / n *100, 1),
-            .groups = "drop") |> 
-  arrange(desc(pct_concordant))
-
-#Concordance table visualization of reliability 
-great_join |> 
-  filter(!is.na(reliability)) |> 
-  count(reliability_ord, quantity_ord) |> 
-  group_by(reliability_ord) |> 
+#Second Heat map
+Heatmap_B <- great_join |> 
+  filter(!is.na(HPA_Intensity)) |> 
+  count(hpa_intensity_ord, quantity_ord) |> 
+  group_by(hpa_intensity_ord) |> 
   mutate(prop = n / sum(n)) |> 
   ungroup() |> 
-  ggplot() + aes(x = reliability_ord, y = quantity_ord, fill = prop) +
+  ggplot() + aes(x = hpa_intensity_ord, y = quantity_ord, fill = prop) +
   geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
                           colour = "white", frontface = "bold") +
-  labs(title = "HPA Reliability Label vs Image-derived Staining %",
-       y = "Image-derived Quantity (%)", 
-       x = "HPA Reliability", 
+  labs(title = "HPA Staining Intensity  vs HPA Quantity Label",
+       subtitle = "Inter-label agreement across 16,643 observations",
+       y = "HPA Quantity Label, derived from HUEQ (%)", 
+       x = "HPA Staining Intensity", 
        fill = "Row proportion") 
-ggsave(here("output", "Act3_concorReli_Heatmap.pdf"))
+#Appendix Figure
+Heatmap_C <- great_join |> 
+  filter(!is.na(HPA_Intensity)) |> 
+  count(hpa_intensity_ord, hpa_staining_ord) |> 
+  group_by(hpa_intensity_ord) |> 
+  mutate(prop = n / sum(n)) |> 
+  ungroup() |> 
+  ggplot() + aes(x = hpa_intensity_ord, y = hpa_staining_ord, fill = prop) +
+  geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
+                          colour = "white", frontface = "bold") +
+  labs(title = "HPA Staining Intensity  vs HPA Quantity Label",
+       subtitle = "Inter-label agreement across 16,643 observations",
+       y = "HPA Quantity Label, derived from HUEQ (%)", 
+       x = "HPA Staining Intensity", 
+       fill = "Row proportion") 
+
 
 ```
 
-Kappa Value for Staining Label (check if able to use)
+### Per Row agreement Agreement 
+
+Between hpa_staining and quantity, as compared in Kappa test. HPA Intensity's "Strong" label should have higher agreement between HPA_Staining and Quantity than "Weak" label entries.
 
 ```{r}
-kappa_reliability <- great_join |> 
-  filter(!is.na(reliability)) |> 
-  transmute(
-    rater1 = as.numeric(reliability_ord),
-    rater2 = as.numeric(quantity_ord)) |> 
-  kappa2(weight = "squared")
-kappa_reliability
-
-```
-
-Identifying nonconcordant observations
-
-```{r}
-nonconcordant <- great_join |> 
-  mutate(concordant = case_when(is.na(reliability) ~ NA, 
-         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
-         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
-         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
-         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
-         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
-         TRUE  ~ FALSE )) |>
-  filter(!is.na(reliability), concordant == FALSE)
-
-#Top 15 tissues
-nonconcordant |> 
-  count(Tissue, sort = TRUE) |> 
-  mutate(prop_nonconcordant = n / sum(n)) |> 
-  head(15) |> 
-  ggplot() + aes(x = reorder(Tissue, n), y = n, fill = n) + 
-  geom_col() + coord_flip() +
-  scale_fill_distiller(palette = "Spectral") +
-  labs(title = "Top 15 Tissues by Nonconcordance Count",
-       x = "Tissue",
-       y = "Number of nonconcordant rows", 
-       fill = " ")
-  
-ggsave(here("output", "Act3_top15_noncor.pdf"))
-
-#Checking for rate within data, sister plot 
-great_join |>
-  mutate(concordant = case_when(is.na(reliability) ~ NA, 
-         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
-         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
-         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
-         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
-         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
+agreement_test <- great_join |>
+  mutate(concordant = case_when(is.na(HPA_Staining) ~ NA,
+         quantity_ord == "None" & hpa_staining_ord == "Not detected" ~ TRUE,
+         quantity_ord == "<25%" & hpa_staining_ord == "Low" ~ TRUE,
+         quantity_ord == "75%-25%" & hpa_staining_ord == "Medium" ~ TRUE,
+         quantity_ord == ">75%" & hpa_staining_ord == "High" ~ TRUE,
          TRUE  ~ FALSE )) |> 
-  filter(!is.na(reliability), !is.na(concordant)) |>
+  filter(!is.na(HPA_Intensity), !is.na(concordant)) |> 
+  group_by(HPA_Intensity) |>
+  summarise( n = n(),
+             n_concordant = sum(concordant),
+             pct_concordant = round(n_concordant / n * 100, 1),
+             .groups = "drop") |> 
+  arrange(desc(pct_concordant))
+
+#Visualization of Agreement 
+
+agreement_figure <- agreement_test |> 
+  ggplot() + aes(x = reorder(HPA_Intensity, pct_concordant), 
+                 y = pct_concordant, 
+                 fill = pct_concordant) + geom_col() +
+  geom_text(aes(label = paste0(pct_concordant,
+                             "%\n(n=", n, ")")), 
+            hjust = -0.1) + 
+  coord_flip(ylim = c(0, 110)) + 
+  labs( title = "Agreement Rate Between HPA Expression Level and Quantity by Intensity",
+        subtitle = "Does HPA Intensity predict consistency between the other two descriptors?",
+        x = "HPA Staining Intensity",
+        y = "% rows where HPA Expression label agrees with Quantity") 
+
+```
+
+### Disagreement
+
+In which cases do the labels not agree
+
+```{r}
+#Per Tissue 
+disagreement_figure_tissue <- great_join |> 
+   mutate(concordant = case_when(is.na(HPA_Staining) ~ NA,
+         quantity_ord == "None" & hpa_staining_ord == "Not detected" ~ TRUE,
+         quantity_ord == "<25%" & hpa_staining_ord == "Low" ~ TRUE,
+         quantity_ord == "75%-25%" & hpa_staining_ord == "Medium" ~ TRUE,
+         quantity_ord == ">75%" & hpa_staining_ord == "High" ~ TRUE,
+         TRUE  ~ FALSE )) |> 
+  filter(!is.na(HPA_Intensity), !is.na(concordant)) |>
   group_by(Tissue) |>
   summarise(n_total        = n(),
-    n_nonconcordant = sum(!concordant, na.rm = TRUE),
-    pct_nonconcordant = round(n_nonconcordant / n_total * 100, 1),
-    .groups = "drop") |>
+            n_nonconcordant = sum(!concordant, na.rm = TRUE),
+            pct_nonconcordant = round(n_nonconcordant / n_total * 100, 1),
+            .groups = "drop") |>
   filter(n_total >= 50) |>       
   slice_max(pct_nonconcordant, n = 15) |>
-  ggplot(aes(x = reorder(Tissue, pct_nonconcordant), 
-             y = pct_nonconcordant,
-             fill = pct_nonconcordant)) +
+  ggplot() + aes(x = reorder(Tissue, pct_nonconcordant), 
+                 y = pct_nonconcordant,
+                 fill = pct_nonconcordant) +
   geom_col() +
   coord_flip() +
-  scale_fill_distiller(palette = "RdYlGn", 
+  scale_fill_distiller(palette = "Spectral", 
                        direction = -1,      
-                       name = "% nonconcordant") +
+                       name = "% disagreement") +
   geom_text(aes(label = paste0(pct_nonconcordant, "%")),
             hjust = -0.2, size = 3.5) +
   labs(
-    title    = "Top 15 Tissues by Nonconcordance Rate",
+    title    = "Top 15 Tissues by Inter-descriptor Disagreement Rate",
     subtitle = "Only tissues with ≥ 50 rows included",
     x        = "Tissue",
-    y        = "% nonconcordant rows") +
+    y        = "% disagreement rows") +
   theme_minimal(base_size = 12) +
   expand_limits(y = 100)
-ggsave(here("output", "Act3_top15_noncor_rate.pdf"))
 
-```
-
-Nonconcordance by antibody
-
-```{r}
-
-great_join |>
-  mutate(concordant = case_when(is.na(reliability) ~ NA, 
-         is.na(quantity_ord) | is.na(staining_ord) ~ NA,
-         quantity_ord == "None" & staining_ord == "Not detected" ~ TRUE,
-         quantity_ord == "<25%" & staining_ord == "Low" ~ TRUE,
-         quantity_ord == "75%-25%" & staining_ord == "Medium" ~ TRUE,
-         quantity_ord == ">75%" & staining_ord == "High" ~ TRUE,
+#Per Antibody rate 
+disagreement_figure_antibody <- great_join |> 
+   mutate(concordant = case_when(is.na(HPA_Staining) ~ NA,
+         quantity_ord == "None" & hpa_staining_ord == "Not detected" ~ TRUE,
+         quantity_ord == "<25%" & hpa_staining_ord == "Low" ~ TRUE,
+         quantity_ord == "75%-25%" & hpa_staining_ord == "Medium" ~ TRUE,
+         quantity_ord == ">75%" & hpa_staining_ord == "High" ~ TRUE,
          TRUE  ~ FALSE )) |> 
-  filter(!is.na(reliability), !is.na(concordant)) |>
-  group_by(antibody) |>
+  filter(!is.na(HPA_Intensity), !is.na(concordant)) |>
+  group_by(Antibody) |>
   summarise(n_total        = n(),
-    n_nonconcordant = sum(!concordant, na.rm = TRUE),
-    pct_nonconcordant = round(n_nonconcordant / n_total * 100, 1),
-    .groups = "drop") |>
+            n_nonconcordant = sum(!concordant, na.rm = TRUE),
+            pct_nonconcordant = round(n_nonconcordant / n_total * 100, 1),
+            .groups = "drop") |>
   filter(n_total >= 50) |>       
   slice_max(pct_nonconcordant, n = 15) |>
-  ggplot(aes(x = reorder(antibody, pct_nonconcordant), 
-             y = pct_nonconcordant,
-             fill = pct_nonconcordant)) +
+  ggplot() + aes(x = reorder(Antibody, pct_nonconcordant), 
+                 y = pct_nonconcordant,
+                 fill = pct_nonconcordant) +
   geom_col() +
   coord_flip() +
-  scale_fill_distiller(palette = "RdYlGn", 
+  scale_fill_distiller(palette = "Spectral", 
                        direction = -1,      
-                       name = "% nonconcordant") +
+                       name = "% disagreement") +
   geom_text(aes(label = paste0(pct_nonconcordant, "%")),
             hjust = -0.2, size = 3.5) +
   labs(
-    title    = "Top 15 Antibodies by Nonconcordance Rate",
+    title    = "Top 15 Antibodies by Inter-descriptor Disagreement Rate",
     subtitle = "Only Antibodies with ≥ 50 rows included",
     x        = "Antibody",
-    y        = "% nonconcordant rows") +
+    y        = "% disagreement rows") +
   theme_minimal(base_size = 12) +
   expand_limits(y = 100)
-ggsave(here("output", "Act3_top15_antibody_noncor_rate.pdf"))
-
-#Since antibodies have much higher rates, verifying top antibody
-
-great_join |> 
-  filter(antibody == "HPA002024") |> 
-  count(staining_ord, quantity_ord, sort = TRUE)
-
-great_join |> 
-  filter(antibody == "HPA002024") |> 
-  nrow()
-great_join |> 
-  filter(antibody == "HPA002024") |> 
-  count(Tissue, sort = TRUE)
 
 ```
