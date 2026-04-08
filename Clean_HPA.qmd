@@ -17,6 +17,7 @@ library(here)
 library(readxl)
 library(janitor)
 library(irr)
+library(patchwork)
 ```
 
 Data loading
@@ -32,7 +33,11 @@ all_metadata <- vroom::vroom(
   progress = TRUE,
   id = "source_file")
 
-Ophelia_data <- read.csv(here("data", "10K_Single_Cell_Filtered(in).csv"))
+HUEQ_data <- read.csv(here("data", "10K_Single_Cell_Filtered(in).csv"))
+
+#reliability column in all_metadata is the "intensity" variable from HPA webiste
+all_metata <- all_metata |> 
+  rename(intensity = )
 
 
 ```
@@ -64,6 +69,14 @@ all_metadata |>
   theme_minimal() +
   labs(title = "Age Distribution by Gender")
 ggsave(here("output", "AgeDistributionByGender.pdf"))
+```
+
+Main figure for counts
+
+```{r}
+
+
+
 ```
 
 Act 2
@@ -162,7 +175,7 @@ mergeable_metadata <- all_metadata |>
          Patient_ID = patient_id, 
          Tissue = tissue)
 #Joining and making proper ordinal values for relevant labels 
-great_join <- Ophelia_data |> 
+great_join <- HUEQ_data |> 
   left_join(mergable_metadata |> 
   select(antibody, 
          Protein, 
@@ -185,7 +198,7 @@ great_join <- Ophelia_data |>
                                   ordered = TRUE))
 
 #EDIT 
-unmatched_data <- setdiff(Ophelia_data$Tissue, mergable_metadata$Tissue)
+unmatched_data <- setdiff(HUEQ_data$Tissue, mergable_metadata$Tissue)
 unmatched_data
 
 
@@ -236,10 +249,10 @@ kappa_stain
 
 ```
 
-Are the reliability labels meaningful? - This is a direct label from all_metadata, basically analysis in three ways - Ophelia's data against all_metadata - HPA site labels against Image-Derived % - Is reliability as good as staining (ei. exp_lvl_cat)?
+Are the reliability labels meaningful? - This is a direct label from all_metadata, basically analysis in three ways - HUEQ's data against all_metadata - HPA site labels against Image-Derived % - Is reliability as good as staining (ei. exp_lvl_cat)?
 
 ```{r}
-#Do rows in reliability (all_metadata) "High" have higher concordance with Ophelia's data than rows where HPA says "Negative"?
+#Do rows in reliability (all_metadata) "High" have higher concordance with HUEQ's data than rows where HPA says "Negative"?
 great_join |> 
   mutate(concordant = case_when(is.na(reliability) ~ NA, 
          is.na(quantity_ord) | is.na(staining_ord) ~ NA,
@@ -404,34 +417,5 @@ great_join |>
 great_join |> 
   filter(antibody == "HPA002024") |> 
   count(Tissue, sort = TRUE)
-
-```
-
-EDIT: To answer the question, Is patient 2523's normal tissue as reliable as any other patient? -\> Does the distribution of reliability scores in normal tissue differ between patients?
-
-```{r}
-all_metadata |> 
-  filter(patient_id %in% c("2523","3731")) |> 
-  select(sample_category, reliability, patient_id) |> 
-  count(reliability)
-#both are only normal tissue, we still see varible reliability
-  
-class(all_metadata$patient_id) 
-
-all_metadata |> 
-  filter(sample_category =="Normal tissue, NOS (M-00100)") |> 
-  count(patient_id)
-
-normal_props <- all_metadata |> 
-  filter(sample_category =="Normal tissue, NOS (M-00100)") |> 
-  count(patient_id,reliability) |> 
-  group_by(patient_id) |> 
-  mutate(prop = n / sum(n)) |> 
-  ungroup()
-#now i will plot per my two highest count patients 
-
-normal_props |> 
-   filter(patient_id %in% c("2523","3731")) |> 
-  ggplot() + aes(x= factor(patient_id), y = prop, fill = reliability) + geom_col()
 
 ```
