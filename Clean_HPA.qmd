@@ -262,7 +262,7 @@ Heatmap_C <- great_join |>
 
 ```
 
-### Per Row agreement Agreement 
+### Per Row agreement Agreement
 
 Between hpa_staining and quantity, as compared in Kappa test. HPA Intensity's "Strong" label should have higher agreement between HPA_Staining and Quantity than "Weak" label entries.
 
