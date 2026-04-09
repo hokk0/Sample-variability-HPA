@@ -53,29 +53,173 @@ all_metadata|>
   theme_minimal()
 ```
 
-Patient counts
-
-```{r}
-all_metadata |> 
-  count(age, sort = TRUE)
-all_metadata |> 
-  count(patient_id, sort = TRUE)
-
-all_metadata |> 
-  filter(!is.na(age)) |> 
-  distinct(patient_id, .keep_all = TRUE) |> 
-  ggplot() + aes(x = age, fill = gender) +
-  geom_histogram(position = "identity", alpha = 0.5, bins = 30) +
-  theme_minimal() +
-  labs(title = "Age Distribution by Gender")
-ggsave(here("output", "AgeDistributionByGender.pdf"))
-```
-
 ### Main figure for counts
 
+Counts for uncomplicated variables
+
 ```{r}
+all_metadata |> 
+  summarise(across(c(gene, tissue, tissue_detail, cell_type, antibody), n_distinct))
 
 
+```
+
+#### Patient Data
+
+3 Male patients with no age, not very significant choosing to remove outliers since they don't affect downstream analysis
+
+```{r}
+patient_histogram <- all_metadata |>
+  distinct(patient_id, .keep_all = TRUE) |>
+  filter(!is.na(age), !is.na(gender)) |> 
+  ggplot() + aes(x = age, fill = gender) + 
+  geom_histogram(position = "identity", alpha = 0.6, bins = 30, color = "white") +
+  scale_fill_manual(values = c("#86E3CE", "#FA897b")) +  
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(),   
+        panel.grid.minor = element_blank(),  
+        axis.line = element_line(color = "grey40"),
+        legend.position = "none",            
+        plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(size = 11),
+        axis.text = element_text(size = 10)) +
+  labs(title = "Age Distribution by Gender",
+       x = "Age",
+       y = "Count",
+       fill = "Gender")
+
+
+#Gender distribution 
+patient_pie <- all_metadata |>
+  distinct(patient_id, .keep_all = TRUE) |>
+  filter(!is.na(age), !is.na(gender)) |> 
+count(gender) |> 
+  mutate(percentage = n / sum(n) * 100) |> 
+ggplot() + aes(x = "", y = n, fill = gender) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar(theta = "y") + 
+  geom_text(aes(label = paste0(round(percentage, 1),"%")),
+    position = position_stack(vjust = 0.5),
+    size = 4,
+    color = "black") +
+  scale_fill_manual(values = c("#86E3CE", "#FA897b")) +
+  labs(fill = "Gender") +
+  theme_minimal() +
+  theme(
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 9),
+    axis.text = element_blank(),
+     axis.title = element_blank(),
+    panel.grid = element_blank()) 
+
+#Patient output
+patient_histogram 
+ggsave(here("output","PatientCounts.pdf"), width = 10, height = 7)
+
+patient_pie 
+ggsave(here("output","PatientPie.pdf"), width = 5, height = 5)
+
+```
+
+#### Sample Category Distribution
+
+```{r}
+figure_sample <- all_metadata |>
+  mutate(broad_category = case_when(
+    str_detect(sample_category, "^Normal tissue") ~ "Normal Tissue",
+    str_detect(sample_category, "^Normal morphology") ~ "Normal Tissue",
+    TRUE ~ "Other"))
+
+
+figure_sample |> 
+  count(broad_category) |> 
+ mutate(percentage = n / sum(n) * 100,
+        broad_category = fct_relevel(broad_category, "Normal Tissue", "Other")) |> 
+  ggplot() + aes(x = broad_category, y = percentage, fill = broad_category) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")),
+            hjust = -0.1, size = 4, frontface = "bold") +
+  scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0))) +
+  coord_flip() +
+  scale_fill_manual(values = c("#86E3CE", "#FA897b")) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line.x      = element_line(color = "grey40"),
+    axis.title       = element_blank(),
+    axis.text.y      = element_text(size = 11, face = "bold"),
+    axis.text.x      = element_blank(),
+    plot.title       = element_text(face = "bold", size = 14)) +
+  labs(title = "Sample Category Distribution")
+ggsave(here("output","Sample_figure.jpeg"))
+
+```
+
+#### Descriptors Distribution
+
+NA values were dropped due to extremely low quantity (19 counts), #named "not representative" in intensity column
+
+```{r}
+Exp_count <- all_metadata |> 
+  count(expression_level_category) |> 
+  filter(!is.na(expression_level_category)) |> 
+   mutate(cat   = factor(expression_level_category, 
+                     levels = c("Not detected", "Low", "Medium", "High")),
+      pct   = round(n / sum(n) * 100, 1)) |> 
+   ggplot() + aes(x = cat, y = pct, fill = cat) +
+  geom_col() +
+  geom_text(aes(label = paste0(pct, "%\n(n=", n, ")")), hjust = -0.1) + 
+  coord_flip(ylim = c(0, 60)) +
+  scale_fill_manual(values = c(
+  "Not detected" = "#86e3ce",
+  "Low"  = "#d0e6a5",
+  "Medium" = "#ffdd94",
+  "High" = "#fa897b")) +
+  scale_y_continuous(breaks = seq(0, 50, by = 10)) +
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(),   
+        panel.grid.minor = element_blank(),  
+        axis.line = element_line(color = "grey40"),
+        legend.position = "none",            
+        plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(size = 11),
+        axis.text = element_text(size = 10)) +
+  labs(title = "Expression level Distribution",
+       y = "(%) of Dataset", 
+       x = "Expression Level") 
+ggsave(here("output","Expression_Dist.pdf"))
+
+intensity_counts <- all_metadata |> 
+count(intensity) |> 
+  filter(!intensity == "Not representative") |> 
+   mutate(cat   = factor(intensity, 
+                     levels = c("Negative", "Weak", "Moderate", "Strong")),
+      pct   = round(n / sum(n) * 100, 1)) |> 
+   ggplot() + aes(x = cat, y = pct, fill = cat) +
+  geom_col() +
+  geom_text(aes(label = paste0(pct, "%\n(n=", n, ")")), hjust = -0.1) + 
+  coord_flip(ylim = c(0, 60)) +
+  scale_fill_manual(values = c(
+  "Negative" = "#86e3ce",
+  "Weak"= "#d0e6a5",
+  "Moderate"= "#ffdd94",
+  "Strong" = "#fa897b")) +
+  scale_y_continuous(breaks = seq(0, 50, by = 10)) +
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(),   
+        panel.grid.minor = element_blank(),  
+        axis.line = element_line(color = "grey40"),
+        legend.position = "none",            
+        plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(size = 11),
+        axis.text = element_text(size = 10)) +
+  labs(title = "Staining Intensity Distribution",
+       y = "(%) of Dataset", 
+       x = "Intensity Category") 
+
+Exp_count + intensity_counts
+ggsave(here("output","Descriptor_count_figures.pdf"))
 
 ```
 
