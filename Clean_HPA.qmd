@@ -321,6 +321,10 @@ great_join <- HUEQ_data |>
                                 ordered = TRUE))
 # 3 duplicate matches removed (with distinct): HPA stores sub-regional tissue entries 
 # (e.g. upper vs lower stomach) that collapse to the same Tissue label causing one HUEQ row to match multiple all_metadata entries
+
+#Downstream analysis includes a filter for 506 entries that account for around 3% of HUEQ data. This exclusion has been made due to a formatting issue in the tissue column. However, it is not a statistically significant quantity of the data.
+great_join |> 
+  filter(!is.na(HPA_Intensity))
 ```
 
 ## ACT 3
@@ -368,7 +372,7 @@ Heatmap_A <- great_join |>
   geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
                           colour = "white", frontface = "bold") +
   labs(title = "HPA Expression Label vs HPA Quantity Label",
-       subtitle = "Inter-label agreement across 16,643 observations",
+       subtitle = "Inter-label agreement across 16,137 observations",
        y = "HPA Quantity Label, derived from HUEQ (%)", 
        x = "HPA Expression Level Category", 
        fill = "Row proportion") 
@@ -383,7 +387,7 @@ Heatmap_B <- great_join |>
   geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
                           colour = "white", frontface = "bold") +
   labs(title = "HPA Staining Intensity  vs HPA Quantity Label",
-       subtitle = "Inter-label agreement across 16,643 observations",
+       subtitle = "Inter-label agreement across 16,137 observations",
        y = "HPA Quantity Label, derived from HUEQ (%)", 
        x = "HPA Staining Intensity", 
        fill = "Row proportion") 
@@ -398,11 +402,13 @@ Heatmap_C <- great_join |>
   geom_tile() + geom_text(aes(label = scales::percent(prop, accuracy = 1)),
                           colour = "white", frontface = "bold") +
   labs(title = "HPA Staining Intensity  vs HPA Quantity Label",
-       subtitle = "Inter-label agreement across 16,643 observations",
+       subtitle = "Inter-label agreement across 16,137 observations",
        y = "HPA Quantity Label, derived from HUEQ (%)", 
        x = "HPA Staining Intensity", 
        fill = "Row proportion") 
-
+#Heat map output 
+Heatmap_A + Heatmap_B 
+ggsave(here("output","Heatmaps.pdf"), width = 11, height = 5)
 
 ```
 
@@ -440,6 +446,7 @@ agreement_figure <- agreement_test |>
         subtitle = "Does HPA Intensity predict consistency between the other two descriptors?",
         x = "HPA Staining Intensity",
         y = "% rows where HPA Expression label agrees with Quantity") 
+ggsave(here("output","Agreement.pdf"), width = 7, height = 4)
 
 ```
 
@@ -469,7 +476,7 @@ disagreement_figure_tissue <- great_join |>
                  fill = pct_nonconcordant) +
   geom_col() +
   coord_flip() +
-  scale_fill_distiller(palette = "Spectral", 
+  scale_fill_distiller(palette = "GnBu", 
                        direction = -1,      
                        name = "% disagreement") +
   geom_text(aes(label = paste0(pct_nonconcordant, "%")),
@@ -481,6 +488,8 @@ disagreement_figure_tissue <- great_join |>
     y        = "% disagreement rows") +
   theme_minimal(base_size = 12) +
   expand_limits(y = 100)
+disagreement_figure_tissue
+ggsave(here("output","disagreement_tissue_blue.pdf"), width = 8, height = 7)
 
 #Per Antibody rate 
 disagreement_figure_antibody <- great_join |> 
@@ -503,7 +512,7 @@ disagreement_figure_antibody <- great_join |>
                  fill = pct_nonconcordant) +
   geom_col() +
   coord_flip() +
-  scale_fill_distiller(palette = "Spectral", 
+  scale_fill_distiller(palette = "GnBu", 
                        direction = -1,      
                        name = "% disagreement") +
   geom_text(aes(label = paste0(pct_nonconcordant, "%")),
@@ -515,5 +524,8 @@ disagreement_figure_antibody <- great_join |>
     y        = "% disagreement rows") +
   theme_minimal(base_size = 12) +
   expand_limits(y = 100)
+
+disagreement_figure_antibody
+ggsave(here("output","disagreement_anti_blue.pdf"), width = 8, height = 7)
 
 ```
