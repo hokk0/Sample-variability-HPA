@@ -225,7 +225,7 @@ ggsave(here("output","Descriptor_count_figures.pdf"))
 
 ## Act 2
 
-Cross tables, using tabyl to make how many times x variable appear in each tissue. Used for descriptive structre
+Cross tables, using tabyl to make how many times x variable appear in each tissue. Used for descriptive structure
 
 ```{r}
 #Gene x tissue frequency and proportions 
