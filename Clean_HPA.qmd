@@ -233,6 +233,18 @@ cross_gene_tissue <- all_metadata |>
   tabyl(gene, tissue) |> 
   adorn_totals("both") 
 
+gene_tissue_summary <- all_metadata |>
+  group_by(gene) |>
+  summarise(n_tissues = n_distinct(tissue), .groups = "drop")
+
+gene_tissue_summary |>
+  summarise(
+    median_tissues = median(n_tissues),
+    min_tissues    = min(n_tissues),
+    max_tissues    = max(n_tissues),
+    pct_in_all_44  = round(mean(n_tissues == 44) * 100, 1),
+    pct_under_10   = round(mean(n_tissues < 10) * 100, 1))
+
 cross_gene_tissue_prop <- all_metadata |> 
   tabyl(gene, tissue) |> 
   adorn_percentages("row") |> 
@@ -247,8 +259,27 @@ cross_anti_intensity_prop <- all_metadata |>
   adorn_percentages("row") |> 
   adorn_pct_formatting()
 
+antibody_dominant_intensity <- all_metadata |>
+  count(antibody, intensity) |>
+  group_by(antibody) |>
+  slice_max(n, n = 1, with_ties = FALSE) |>
+  ungroup()
 
-#an example of three way cros: intensity x patient x sample category 
+#Which intensity is most commonly dominant across antibodies?
+antibody_dominant_intensity |>
+  count(intensity, name = "n_antibodies") |>
+  mutate(
+    pct = round(n_antibodies / sum(n_antibodies) * 100, 1)) |>
+  arrange(desc(n_antibodies))
+
+#How many antibodies appear exclusively with one intensity category?
+all_metadata |>
+  group_by(antibody) |>
+  summarise(n_intensity_cats = n_distinct(intensity), .groups = "drop") |>
+  count(n_intensity_cats) |>
+  mutate(pct = round(n / sum(n) * 100, 1))
+
+#An example of three way cross: intensity x patient x sample category 
 cross3way_rel_patient_sampleCat <- all_metadata |> 
   group_by(intensity) |> 
   summarise(
@@ -259,7 +290,7 @@ cross3way_rel_patient_sampleCat <- all_metadata |>
 
 ```{r}
 #Purely per patient
-all_metadata |>
+not_detected_pat <- all_metadata |>
   group_by(patient_id) |>
   summarise(n_total = n(),
     has_not_detected = any(expression_level_category == "Not detected", na.rm = TRUE),
@@ -271,8 +302,27 @@ all_metadata |>
       !has_not_detected & has_other ~ "no not detected (only real results)",
       TRUE ~ "other"))
 
+patient_detection_profile <- all_metadata |>
+  group_by(patient_id) |>
+  summarise(
+    n_total          = n(),
+    has_not_detected = any(expression_level_category == "Not detected", na.rm = TRUE),
+    has_other        = any(expression_level_category != "Not detected", na.rm = TRUE),
+    .groups          = "drop") |>
+  mutate(category = case_when(
+    has_not_detected & has_other  ~ "mixed (not detected + other result)",
+    has_not_detected & !has_other ~ "only not detected",
+    !has_not_detected & has_other ~ "no not detected (only real results)",
+    TRUE ~ "other"))
+
+#Reportable numbers
+patient_detection_profile |>
+  count(category) |>
+  mutate(pct = round(n / sum(n) * 100, 1)) |>
+  arrange(desc(n))
+
 #Per Patient x gene 
-all_metadata |>
+not_detected_pat_gene <- all_metadata |>
   group_by(patient_id, gene) |>
   summarise(n_tests = n(),
     has_not_detected = any(expression_level_category == "Not detected",
@@ -288,6 +338,37 @@ all_metadata |>
       has_not_detected & !has_other ~ "only not detected (no retest)",
       has_not_detected & has_other ~ "not detected and a retest",
       !has_not_detected ~ "never not detected"))
+
+patient_gene_detection_profile <- all_metadata |>
+  group_by(patient_id, gene) |>
+  summarise(
+    n_tests          = n(),
+    has_not_detected = any(expression_level_category == "Not detected", na.rm = TRUE),
+    has_other        = any(expression_level_category != "Not detected", na.rm = TRUE),
+    n_not_detected   = sum(expression_level_category == "Not detected", na.rm = TRUE),
+    n_other          = sum(expression_level_category != "Not detected", na.rm = TRUE),
+    .groups          = "drop") |>
+  mutate(category = case_when(
+    has_not_detected & !has_other ~ "only not detected (no retest)",
+    has_not_detected &  has_other ~ "not detected and a retest",
+    !has_not_detected             ~ "never not detected"))
+
+#Reportable numbers
+patient_gene_detection_profile |>
+  count(category) |>
+  mutate(pct = round(n / sum(n) * 100, 1)) |>
+  arrange(desc(n))
+
+#Is not detected tissue-specific?
+all_metadata |>
+  group_by(tissue_detail) |>
+  summarise(
+    n_total          = n(),
+    pct_not_detected = round(
+      mean(expression_level_category == "Not detected", na.rm = TRUE) * 100, 1),
+    .groups = "drop") |>
+  arrange(desc(pct_not_detected)) |>
+  head(5)
 ```
 
 ### Data Merge & Exploration
